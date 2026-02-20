@@ -4,9 +4,10 @@ from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 import math
 from functools import wraps
+import os
 
 app = Flask(__name__)
-app.secret_key = "change-this-to-a-random-secret"  # IMPORTANT: change later
+app.secret_key = os.environ.get("SECRET_KEY", "dev-fallback-secret")
 
 DB_NAME = "database.db"
 
