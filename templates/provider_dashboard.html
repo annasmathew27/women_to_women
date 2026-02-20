@@ -1,6 +1,9 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Pacifico&family=Poppins:wght@500;600;700;800&display=swap" rel="stylesheet">
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Provider Dashboard</title>
@@ -13,14 +16,24 @@
   <style>
     #map { height: 280px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.12); }
     .muted { opacity: 0.75; font-size: 14px; }
+
     .badge { padding: 6px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.2); font-size: 12px; }
     .ok { border-color: rgba(80,255,160,0.45); }
     .no { border-color: rgba(255,77,77,0.45); }
     .warn { border-color: rgba(255,200,80,0.45); }
+
     .item { margin-top: 12px; padding: 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.04); }
     .top { display:flex; justify-content: space-between; gap:10px; align-items:flex-start; }
+    .actions { margin-top: 10px; display:flex; gap:10px; flex-wrap: wrap; }
+
+    .sectionHeader { margin-top: 14px; font-weight: 800; }
+    .smallBtn { padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,0.08); color: #e9eef7; cursor:pointer; border:none; }
+    .smallBtn:hover { background: rgba(255,255,255,0.12); }
+
+    .pill { display:inline-block; padding: 6px 10px; border-radius: 999px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); font-size: 12px; }
   </style>
 </head>
+
 <body>
   <div class="container">
     <div class="row">
@@ -61,15 +74,21 @@
     <!-- Requests Feed -->
     <div class="card">
       <div class="row">
-        <h2>Requests</h2>
+        <h2>Requests In Your Service Area</h2>
         <button class="btn" id="refreshBtn" type="button">Refresh</button>
       </div>
-      <div id="list" class="muted">Loading…</div>
+
+      <div class="muted" id="summary" style="margin-top:6px;"></div>
+
+      <div id="list" class="muted" style="margin-top:10px;">Loading…</div>
+
+      <div class="sectionHeader">Serviced (history)</div>
+      <div id="servicedList" class="muted" style="margin-top:10px;">—</div>
     </div>
   </div>
 
 <script>
-  // Map defaults
+  // ---------- Map ----------
   const defaultLat = -31.9523, defaultLng = 115.8613;
 
   const latInput = document.getElementById("lat");
@@ -125,42 +144,168 @@
     );
   });
 
-  // ---- Requests feed with "can serve" ----
+  // ---------- Requests ----------
   const list = document.getElementById("list");
+  const servicedList = document.getElementById("servicedList");
   const refreshBtn = document.getElementById("refreshBtn");
+  const summary = document.getElementById("summary");
 
-  function esc(s){ return String(s ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;"); }
+  function esc(s){
+    return String(s ?? "")
+      .replaceAll("&","&amp;")
+      .replaceAll("<","&lt;")
+      .replaceAll(">","&gt;");
+  }
+
+  function isServiced(status){
+    return String(status ?? "").toLowerCase() === "serviced";
+  }
+
+  function isOpen(status){
+    return String(status ?? "").toLowerCase() === "open";
+  }
 
   function badge(item){
-    if (item.can_serve === true) return `<span class="badge ok">✅ Can serve • ${item.distance_km} km</span>`;
+    if (isServiced(item.status)) return `<span class="badge ok">✅ Serviced</span>`;
+    if (item.can_serve === true) return `<span class="badge ok">✅ In range • ${item.distance_km} km</span>`;
     if (item.serve_reason && item.serve_reason.includes("Set your")) return `<span class="badge warn">⚠️ ${esc(item.serve_reason)}</span>`;
     if (item.serve_reason && item.serve_reason.includes("No pin")) return `<span class="badge warn">⚠️ ${esc(item.serve_reason)}</span>`;
-    return `<span class="badge no">❌ ${esc(item.serve_reason || "Cannot serve")}</span>`;
+    return `<span class="badge no">❌ ${esc(item.serve_reason || "Out of range")}</span>`;
+  }
+
+  function scheduleLine(r){
+    const parts = [];
+    if (r.scheduled_date) parts.push(`📅 ${esc(r.scheduled_date)}`);
+    if (r.scheduled_time) parts.push(`⏰ ${esc(r.scheduled_time)}`);
+    if (r.duration_min) parts.push(`⏳ ${esc(r.duration_min)} min`);
+    if (r.hourly_wage != null) parts.push(`💰 ₹${esc(r.hourly_wage)}/hr`);
+    if (!parts.length) return "";
+    return `<div class="muted" style="margin-top:6px;">${parts.join(" • ")}</div>`;
+  }
+
+  async function markServiced(id, btn){
+    btn.disabled = true;
+    btn.textContent = "Marking…";
+
+    try {
+      const res = await fetch(`/api/requests/${id}/resolve`, { method: "POST", credentials: "same-origin" });
+      const out = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        alert(out.error || `Failed (${res.status})`);
+        btn.disabled = false;
+        btn.textContent = "Mark Serviced";
+        return;
+      }
+
+      // If backend returns already=true
+      if (out.already) {
+        btn.textContent = "Already serviced ✅";
+      } else {
+        btn.textContent = "Serviced ✅";
+      }
+
+      await load();
+    } catch (e) {
+      alert("Network error.");
+      btn.disabled = false;
+      btn.textContent = "Mark Serviced";
+    }
+  }
+
+  function renderInRangeOpen(r){
+    const canServe = r.can_serve === true;
+    const open = isOpen(r.status);
+    const showAction = canServe && open;
+
+    return `
+      <div class="item">
+        <div class="top">
+          <div>
+            <div style="font-weight:700;">
+              ${esc(r.title)} <span class="muted">(${esc(r.category)})</span>
+            </div>
+            <div class="muted">From: ${esc(r.receiver_name)} • ${new Date(r.created_at).toLocaleString()}</div>
+            <div class="muted">Location: ${esc(r.location_text || "—")}</div>
+            ${scheduleLine(r)}
+          </div>
+          ${badge(r)}
+        </div>
+
+        ${r.details ? `<div class="muted" style="margin-top:8px;">${esc(r.details)}</div>` : ""}
+
+        <div class="actions">
+          ${showAction ? `<button class="smallBtn" data-service="${r.id}">Mark Serviced</button>` : `<span class="pill">No action</span>`}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderServiced(r){
+    return `
+      <div class="item">
+        <div class="top">
+          <div>
+            <div style="font-weight:700;">
+              ${esc(r.title)} <span class="muted">(${esc(r.category)})</span>
+            </div>
+            <div class="muted">From: ${esc(r.receiver_name)} • ${new Date(r.created_at).toLocaleString()}</div>
+            ${scheduleLine(r)}
+          </div>
+          <span class="badge ok">✅ Serviced</span>
+        </div>
+      </div>
+    `;
+  }
+
+  function wireServiceButtons(){
+    document.querySelectorAll("[data-service]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const id = btn.getAttribute("data-service");
+        markServiced(id, btn);
+      });
+    });
   }
 
   async function load() {
     list.textContent = "Loading…";
-    const res = await fetch("/api/provider/requests");
-    const data = await res.json();
+    servicedList.textContent = "Loading…";
+    summary.textContent = "";
 
-    if (!Array.isArray(data) || data.length === 0) {
-      list.innerHTML = `<div class="muted">No requests yet.</div>`;
+    const res = await fetch("/api/provider/requests", { credentials: "same-origin" });
+    const data = await res.json().catch(() => null);
+
+    if (!res.ok) {
+      list.innerHTML = `<div class="muted">${esc((data && data.error) ? data.error : `Failed (${res.status})`)}</div>`;
+      servicedList.innerHTML = "—";
       return;
     }
 
-    list.innerHTML = data.map(r => `
-      <div class="item">
-        <div class="top">
-          <div>
-            <div style="font-weight:700;">${esc(r.title)} <span class="muted">(${esc(r.category)})</span></div>
-            <div class="muted">From: ${esc(r.receiver_name)} • ${new Date(r.created_at).toLocaleString()}</div>
-            <div class="muted">Location: ${esc(r.location_text || "—")}</div>
-          </div>
-          ${badge(r)}
-        </div>
-        ${r.details ? `<div class="muted" style="margin-top:8px;">${esc(r.details)}</div>` : ""}
-      </div>
-    `).join("");
+    if (!Array.isArray(data)) {
+      list.innerHTML = `<div class="muted">Unexpected response.</div>`;
+      servicedList.innerHTML = "—";
+      return;
+    }
+
+    // ✅ ONLY requests the provider can serve + open
+    const inRangeOpen = data.filter(r => r.can_serve === true && isOpen(r.status));
+    const serviced = data.filter(r => isServiced(r.status));
+
+    summary.textContent =
+      `Showing ${inRangeOpen.length} open request(s) inside your service radius.`;
+
+    if (inRangeOpen.length === 0) {
+      list.innerHTML = `<div class="muted">No open requests inside your service area right now.</div>`;
+    } else {
+      list.innerHTML = inRangeOpen.map(renderInRangeOpen).join("");
+      wireServiceButtons();
+    }
+
+    if (serviced.length === 0) {
+      servicedList.innerHTML = `<div class="muted">No serviced requests yet.</div>`;
+    } else {
+      servicedList.innerHTML = serviced.map(renderServiced).join("");
+    }
   }
 
   refreshBtn.addEventListener("click", load);

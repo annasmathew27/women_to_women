@@ -1,5 +1,9 @@
 <!DOCTYPE html>
-<html><head>
+<html>
+<head>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Pacifico&family=Poppins:wght@500;600;700;800&display=swap" rel="stylesheet">
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Receiver Signup</title>
@@ -12,13 +16,40 @@
     {% if error %}<div class="error">{{ error }}</div>{% endif %}
 
     <form method="POST" class="card">
-      <label>Name<input name="name" required /></label>
-      <label>Email<input name="email" type="email" required /></label>
-      <label>Password<input name="password" type="password" required /></label>
-      <button class="btn" type="submit">Create account</button>
+      <label>
+        Name
+        <input name="name" required />
+      </label>
+
+      <label>
+        Email
+        <input name="email" type="email" required />
+      </label>
+
+      <label>
+        Password
+        <input name="password" type="password" required />
+      </label>
+
+      <label>
+        Gender
+        <select name="gender_declared" required style="width:100%; padding:10px; border-radius:10px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.05); color:#e9eef7;">
+          <option value="">Select</option>
+          <option value="woman">Woman</option>
+          <option value="other">Other</option>
+        </select>
+      </label>
+
+      <label style="margin-top:10px;">
+        <input type="checkbox" name="confirm_woman" value="yes" required />
+        I confirm that I am a woman and understand this platform is women-only.
+      </label>
+
+      <button class="btn primary" type="submit">Create account</button>
     </form>
 
     <p>Already have an account? <a href="/receiver/login">Login</a></p>
     <p><a href="/">Back</a></p>
   </div>
-</body></html>
+</body>
+</html>

@@ -1,28 +1,347 @@
-body { font-family: Arial, sans-serif; background: #0b0f14; color: #e9eef7; margin: 0; }
-.container { max-width: 900px; margin: 30px auto; padding: 0 16px; }
-.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.card { background: #121926; padding: 16px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.12); }
-label { display:block; margin: 10px 0; }
-input { width: 100%; padding: 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.05); color: #e9eef7; }
-button { border: none; }
-.btn { display: inline-block; padding: 10px 12px; border-radius: 10px; background: rgba(255,255,255,0.08); color: #e9eef7; text-decoration: none; cursor: pointer; }
-.btn:hover { background: rgba(255,255,255,0.12); }
-.btn.secondary { background: rgba(90,169,255,0.16); }
-.error { margin: 10px 0; padding: 10px; border-radius: 10px; background: rgba(255, 77, 77, 0.18); border: 1px solid rgba(255, 77, 77, 0.35); }
-.row { display:flex; justify-content: space-between; align-items: center; gap: 12px; }
-@media (max-width: 700px){ .grid { grid-template-columns: 1fr; } }
-.modal.hidden { display: none; }
-.modal {
-  position: fixed; inset: 0;
-  background: rgba(0,0,0,0.55);
-  display: flex; align-items: center; justify-content: center;
-  padding: 16px;
-}
-.modalBox{
-  width: min(520px, 100%);
-  background: #121926;
-  border: 1px solid rgba(255,255,255,0.14);
-  border-radius: 14px;
-  padding: 16px;
+/* =========================
+   BRIGHT BARBIE PINK UI
+   Clean • Visible • Light
+   ========================= */
+/* =========================
+   💖 Classy Cursive Typography
+   No external fonts needed
+   ========================= */
+
+:root{
+  --fontHeading: "Segoe Script", "Brush Script MT", "Lucida Handwriting", cursive;
+  --fontBody: "Segoe UI", "Trebuchet MS", Arial, sans-serif;
 }
 
+/* Body text */
+body{
+  font-family: var(--fontBody);
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: #3a0028;  /* strong readable pink */
+}
+
+/* Main headings */
+h1, h2, h3{
+  font-family: var(--fontHeading);
+  font-weight: bold;
+  letter-spacing: 1px;
+}
+
+/* Make top title prettier */
+.row:first-of-type h1{
+  font-size: 32px;
+  text-shadow: 
+    1px 1px 0px rgba(255,255,255,0.6),
+    0 6px 18px rgba(255,42,166,0.25);
+}
+
+/* Section titles */
+.sectionTitle{
+  font-family: var(--fontHeading);
+  font-size: 22px;
+  color: #ff2aa6;
+  letter-spacing: 1px;
+}
+
+/* Buttons stay clean and bold */
+.btn{
+  font-family: var(--fontBody);
+  font-weight: 800;
+  letter-spacing: 0.5px;
+}
+
+/* Labels readable */
+label{
+  font-family: var(--fontBody);
+  font-weight: 700;
+}
+:root{
+  --bg:#fff4fa;              /* very light pink background */
+  --card:#ffffff;
+  --pink:#ff2aa6;            /* hot pink */
+  --pink2:#ff5fc7;           /* bubblegum */
+  --pinkSoft:#ffe1f3;
+  --text:#5a003f;            /* deep readable pink */
+  --muted:#a64d7d;
+}
+
+/* ========== Page Background ========== */
+body{
+  margin:0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  background: linear-gradient(180deg, #fff4fa, #ffe9f6);
+  color: var(--text);
+}
+
+/* subtle floating circles */
+body::before{
+  content:"";
+  position:fixed;
+  top:-100px;
+  left:-100px;
+  width:400px;
+  height:400px;
+  background: radial-gradient(circle, rgba(255,42,166,0.15), transparent 70%);
+  border-radius:50%;
+  z-index:-1;
+}
+
+body::after{
+  content:"";
+  position:fixed;
+  bottom:-120px;
+  right:-120px;
+  width:500px;
+  height:500px;
+  background: radial-gradient(circle, rgba(255,95,199,0.18), transparent 70%);
+  border-radius:50%;
+  z-index:-1;
+}
+
+/* ========== Layout ========== */
+.container{
+  max-width: 1000px;
+  margin: 30px auto;
+  padding: 0 16px 40px;
+}
+
+.row{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:12px;
+  flex-wrap:wrap;
+}
+
+/* ========== Header Strip ========== */
+.row:first-of-type{
+  background: linear-gradient(135deg, var(--pink), var(--pink2));
+  padding: 18px;
+  border-radius: 16px;
+  color:white;
+}
+
+.row:first-of-type h1{
+  margin:0;
+  font-size: 26px;
+}
+
+/* ========== Cards ========== */
+.card{
+  background: var(--card);
+  border-radius: 18px;
+  padding: 20px;
+  margin-top:18px;
+  border: 2px solid var(--pinkSoft);
+  position:relative;
+}
+
+/* left pink accent */
+.card::before{
+  content:"";
+  position:absolute;
+  left:0;
+  top:0;
+  bottom:0;
+  width:6px;
+  background: linear-gradient(180deg, var(--pink), var(--pink2));
+  border-radius:18px 0 0 18px;
+}
+
+/* ========== Inputs ========== */
+label{
+  display:block;
+  margin: 12px 0 6px;
+  font-weight: 600;
+}
+
+input, textarea, select{
+  width:100%;
+  padding:10px 12px;
+  border-radius:12px;
+  border: 2px solid #ffd2ec;
+  background:white;
+  color: var(--text);
+  font-size:14px;
+  outline:none;
+  transition:0.2s;
+}
+
+input:focus, textarea:focus, select:focus{
+  border-color: var(--pink);
+  box-shadow: 0 0 0 4px rgba(255,42,166,0.15);
+}
+
+/* ========== Buttons ========== */
+.btn{
+  padding: 10px 18px;
+  border-radius: 999px;
+  border:none;
+  font-weight:600;
+  cursor:pointer;
+  transition:0.2s;
+  background: #ffd9f1;
+  color: var(--text);
+}
+
+.btn.primary{
+  background: linear-gradient(135deg, var(--pink), var(--pink2));
+  color:white;
+}
+
+.btn.secondary{
+  background: white;
+  border:2px solid var(--pink);
+  color: var(--pink);
+}
+
+.btn:hover{
+  transform: translateY(-2px);
+}
+
+/* ========== Feed Items ========== */
+.item{
+  background: var(--pinkSoft);
+  padding: 14px;
+  border-radius: 14px;
+  margin-top: 12px;
+}
+
+.badge{
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight:600;
+}
+
+.badge.open{
+  background: #ffd2ec;
+  color: var(--pink);
+}
+
+.badge.serviced{
+  background: #e8ffe8;
+  color: green;
+}
+
+/* ========== Schedule UI ========== */
+.sectionTitle{
+  font-size:20px;
+  font-weight:700;
+  margin: 18px 0 10px;
+}
+
+/* Date chips */
+.chipRow{
+  display:flex;
+  gap:12px;
+  flex-wrap:wrap;
+}
+
+.chip{
+  background:white;
+  border:2px solid #ffd2ec;
+  border-radius:16px;
+  padding:12px;
+  cursor:pointer;
+  transition:0.2s;
+}
+
+.chip.selected{
+  background: var(--pink);
+  color:white;
+  border-color: var(--pink);
+}
+
+/* Duration cards */
+.cardRow{
+  display:grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap:14px;
+}
+
+@media (max-width: 800px){
+  .cardRow{
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.durCard{
+  background:white;
+  border:2px solid #ffd2ec;
+  border-radius:16px;
+  padding:14px;
+  cursor:pointer;
+  text-align:center;
+}
+
+.durCard.selected{
+  background: var(--pink);
+  color:white;
+}
+
+/* Time buttons */
+.timeGrid{
+  display:grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap:12px;
+}
+
+@media (max-width: 800px){
+  .timeGrid{
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.timeBtn{
+  background:white;
+  border:2px solid #ffd2ec;
+  border-radius:14px;
+  padding:12px;
+  text-align:center;
+  cursor:pointer;
+}
+
+.timeBtn.selected{
+  background: var(--pink2);
+  color:white;
+}
+
+/* Wage box */
+.wageBox{
+  margin-top:14px;
+  padding:14px;
+  background: #ffe9f6;
+  border-radius:16px;
+  display:flex;
+  justify-content:space-between;
+  flex-wrap:wrap;
+}
+
+.currency{
+  font-weight:700;
+  color: var(--pink);
+}
+
+.wageTotal{
+  font-size:22px;
+  font-weight:700;
+  color: var(--pink);
+}
+
+/* Map */
+#map{
+  height:320px;
+  border-radius:16px;
+  border:3px solid var(--pinkSoft);
+  margin-top:12px;
+}
+
+/* Error */
+.error{
+  background: #ffe3ef;
+  padding:10px;
+  border-radius:10px;
+  color:#b00050;
+  margin-bottom:10px;
+}

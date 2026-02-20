@@ -10,10 +10,15 @@ app.secret_key = "change-this-to-a-random-secret"  # IMPORTANT: change later
 
 DB_NAME = "database.db"
 
+
+# =========================
+# DB helpers
+# =========================
 def get_db():
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
     return conn
+
 
 def init_db():
     conn = get_db()
@@ -31,7 +36,6 @@ def init_db():
         )
     """)
 
-    # Add missing columns to users (safe)
     cols = {row["name"] for row in cur.execute("PRAGMA table_info(users)").fetchall()}
 
     if "location_text" not in cols:
@@ -57,7 +61,6 @@ def init_db():
         )
     """)
 
-    # Add missing columns to requests (safe)
     req_cols = {row["name"] for row in cur.execute("PRAGMA table_info(requests)").fetchall()}
 
     if "location_text" not in req_cols:
@@ -67,24 +70,43 @@ def init_db():
     if "lng" not in req_cols:
         cur.execute("ALTER TABLE requests ADD COLUMN lng REAL")
 
+    # schedule + wage fields
+    if "scheduled_date" not in req_cols:
+        cur.execute("ALTER TABLE requests ADD COLUMN scheduled_date TEXT")
+    if "scheduled_time" not in req_cols:
+        cur.execute("ALTER TABLE requests ADD COLUMN scheduled_time TEXT")
+    if "duration_min" not in req_cols:
+        cur.execute("ALTER TABLE requests ADD COLUMN duration_min INTEGER")
+    if "hourly_wage" not in req_cols:
+        cur.execute("ALTER TABLE requests ADD COLUMN hourly_wage REAL")
+
+    # serviced tracking
+    if "serviced_at" not in req_cols:
+        cur.execute("ALTER TABLE requests ADD COLUMN serviced_at TEXT")
+    if "serviced_by_user_id" not in req_cols:
+        cur.execute("ALTER TABLE requests ADD COLUMN serviced_by_user_id INTEGER")
+
     conn.commit()
     conn.close()
 
 
-# --------- helpers ----------
+# =========================
+# Helpers
+# =========================
 def current_user():
-    
     uid = session.get("user_id")
     if not uid:
         return None
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT id, role, name, email, location_text, lat, lng, service_radius_km FROM users WHERE id=?", (uid,))
-
+    cur.execute(
+        "SELECT id, role, name, email, location_text, lat, lng, service_radius_km "
+        "FROM users WHERE id=?",
+        (uid,),
+    )
     row = cur.fetchone()
     conn.close()
     return dict(row) if row else None
-
 
 
 def login_required(role=None):
@@ -92,15 +114,11 @@ def login_required(role=None):
         @wraps(fn)
         def wrapper(*args, **kwargs):
             user = current_user()
-
-            # If not logged in:
             if not user:
-                # ✅ If API call, return JSON, not redirect HTML
                 if request.path.startswith("/api/"):
                     return jsonify({"error": "Login required"}), 401
                 return redirect(url_for("home"))
 
-            # If wrong role:
             if role and user["role"] != role:
                 if request.path.startswith("/api/"):
                     return jsonify({"error": "Forbidden for this role"}), 403
@@ -110,6 +128,7 @@ def login_required(role=None):
         return wrapper
     return decorator
 
+
 def find_user_by_email(email):
     conn = get_db()
     cur = conn.cursor()
@@ -118,38 +137,62 @@ def find_user_by_email(email):
     conn.close()
     return row
 
+
 def create_user(role, name, email, password):
     pw_hash = generate_password_hash(password)
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO users (role, name, email, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
-        (role, name, email, pw_hash, datetime.utcnow().isoformat())
+        (role, name, email, pw_hash, datetime.utcnow().isoformat()),
     )
     conn.commit()
     new_id = cur.lastrowid
     conn.close()
     return new_id
+
+
 def haversine_km(lat1, lon1, lat2, lon2):
     R = 6371.0
     p = math.pi / 180.0
     dlat = (lat2 - lat1) * p
     dlon = (lon2 - lon1) * p
-    a = (math.sin(dlat/2)**2) + math.cos(lat1*p)*math.cos(lat2*p)*(math.sin(dlon/2)**2)
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    a = (math.sin(dlat / 2) ** 2) + math.cos(lat1 * p) * math.cos(lat2 * p) * (math.sin(dlon / 2) ** 2)
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
 
-# --------- routes ----------
+
+def to_float(x):
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return None
+
+
+def to_int(x):
+    try:
+        return int(x)
+    except (TypeError, ValueError):
+        return None
+
+
+# =========================
+# Pages
+# =========================
 @app.route("/")
 def home():
     return render_template("index.html")
+
 
 @app.route("/logout")
 def logout():
     session.clear()
     return redirect(url_for("home"))
 
-# ---- Receiver Auth ----
+
+# =========================
+# Receiver auth
+# =========================
 @app.route("/receiver/signup", methods=["GET", "POST"])
 def receiver_signup():
     if request.method == "GET":
@@ -158,22 +201,28 @@ def receiver_signup():
     name = (request.form.get("name") or "").strip()
     email = (request.form.get("email") or "").strip().lower()
     password = request.form.get("password") or ""
+    gender_declared = (request.form.get("gender_declared") or "").strip().lower()
+    confirm_woman = request.form.get("confirm_woman")
 
     if not name or not email or not password:
         return render_template("receiver_signup.html", error="All fields are required.")
 
+    if gender_declared != "woman":
+        return render_template("receiver_signup.html", error="This platform is women-only.")
+
+    if confirm_woman != "yes":
+        return render_template("receiver_signup.html", error="You must confirm you are a woman to continue.")
+
     existing = find_user_by_email(email)
     if existing:
-        # if exists, ask them to login (and show correct link based on role)
-        role = existing["role"]
-        if role == "receiver":
+        if existing["role"] == "receiver":
             return render_template("receiver_signup.html", error="Account already exists. Please login instead.")
-        else:
-            return render_template("receiver_signup.html", error="This email is registered as a Provider. Please login as Provider.")
+        return render_template("receiver_signup.html", error="This email is registered as a Provider. Please login as Provider.")
 
     user_id = create_user("receiver", name, email, password)
     session["user_id"] = user_id
     return redirect(url_for("receiver_dashboard"))
+
 
 @app.route("/receiver/login", methods=["GET", "POST"])
 def receiver_login():
@@ -194,35 +243,26 @@ def receiver_login():
     session["user_id"] = user["id"]
     return redirect(url_for("receiver_dashboard"))
 
+
 @app.route("/receiver/dashboard")
 @login_required(role="receiver")
 def receiver_dashboard():
-    user = current_user()
-    return render_template("receiver_dashboard.html", user=user)
+    return render_template("receiver_dashboard.html", user=current_user())
+
+
 @app.route("/receiver/location", methods=["POST"])
 @login_required(role="receiver")
 def receiver_location_save():
     user = current_user()
-
     location_text = (request.form.get("location_text") or "").strip()
-    lat = request.form.get("lat")
-    lng = request.form.get("lng")
-
-    # Convert lat/lng safely
-    def to_float(x):
-        try:
-            return float(x)
-        except (TypeError, ValueError):
-            return None
-
-    lat_f = to_float(lat)
-    lng_f = to_float(lng)
+    lat_f = to_float(request.form.get("lat"))
+    lng_f = to_float(request.form.get("lng"))
 
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
         "UPDATE users SET location_text=?, lat=?, lng=? WHERE id=?",
-        (location_text if location_text else None, lat_f, lng_f, user["id"])
+        (location_text if location_text else None, lat_f, lng_f, user["id"]),
     )
     conn.commit()
     conn.close()
@@ -230,7 +270,9 @@ def receiver_location_save():
     return redirect(url_for("receiver_dashboard"))
 
 
-# ---- Provider Auth ----
+# =========================
+# Provider auth
+# =========================
 @app.route("/provider/signup", methods=["GET", "POST"])
 def provider_signup():
     if request.method == "GET":
@@ -239,21 +281,28 @@ def provider_signup():
     name = (request.form.get("name") or "").strip()
     email = (request.form.get("email") or "").strip().lower()
     password = request.form.get("password") or ""
+    gender_declared = (request.form.get("gender_declared") or "").strip().lower()
+    confirm_woman = request.form.get("confirm_woman")
 
     if not name or not email or not password:
         return render_template("provider_signup.html", error="All fields are required.")
 
+    if gender_declared != "woman":
+        return render_template("provider_signup.html", error="This platform is women-only.")
+
+    if confirm_woman != "yes":
+        return render_template("provider_signup.html", error="You must confirm you are a woman to continue.")
+
     existing = find_user_by_email(email)
     if existing:
-        role = existing["role"]
-        if role == "provider":
+        if existing["role"] == "provider":
             return render_template("provider_signup.html", error="Account already exists. Please login instead.")
-        else:
-            return render_template("provider_signup.html", error="This email is registered as a Receiver. Please login as Receiver.")
+        return render_template("provider_signup.html", error="This email is registered as a Receiver. Please login as Receiver.")
 
     user_id = create_user("provider", name, email, password)
     session["user_id"] = user_id
     return redirect(url_for("provider_dashboard"))
+
 
 @app.route("/provider/login", methods=["GET", "POST"])
 def provider_login():
@@ -274,123 +323,36 @@ def provider_login():
     session["user_id"] = user["id"]
     return redirect(url_for("provider_dashboard"))
 
+
 @app.route("/provider/dashboard")
 @login_required(role="provider")
 def provider_dashboard():
-    user = current_user()
-    return render_template("provider_dashboard.html", user=user)
+    return render_template("provider_dashboard.html", user=current_user())
 
-# ---- (Optional) API for receiver to create request ----
-@app.route("/api/requests", methods=["GET"])
-def list_requests():
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT r.*, u.name AS receiver_name
-        FROM requests r
-        JOIN users u ON u.id = r.receiver_user_id
-        ORDER BY r.id DESC
-    """)
-    rows = cur.fetchall()
-    conn.close()
-    return jsonify([dict(r) for r in rows])
-@app.route("/api/requests/<int:req_id>/resolve", methods=["POST"])
-def resolve_request(req_id):
-    # optionally enforce provider only:
-    user = current_user()
-    if not user or user["role"] != "provider":
-        return jsonify({"error": "Provider login required"}), 401
 
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("UPDATE requests SET status='Resolved' WHERE id=?", (req_id,))
-    conn.commit()
-    updated = cur.rowcount
-    conn.close()
-
-    if updated == 0:
-        return jsonify({"error": "Request not found"}), 404
-    return jsonify({"ok": True})
 @app.route("/provider/service", methods=["POST"])
 @login_required(role="provider")
 def provider_service_save():
     user = current_user()
-
-    lat = request.form.get("lat")
-    lng = request.form.get("lng")
-    radius = request.form.get("service_radius_km")
-
-    def to_float(x):
-        try:
-            return float(x)
-        except (TypeError, ValueError):
-            return None
-
-    lat_f = to_float(lat)
-    lng_f = to_float(lng)
-    radius_f = to_float(radius)
+    lat_f = to_float(request.form.get("lat"))
+    lng_f = to_float(request.form.get("lng"))
+    radius_f = to_float(request.form.get("service_radius_km"))
 
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
         "UPDATE users SET lat=?, lng=?, service_radius_km=? WHERE id=?",
-        (lat_f, lng_f, radius_f, user["id"])
+        (lat_f, lng_f, radius_f, user["id"]),
     )
     conn.commit()
     conn.close()
+
     return redirect(url_for("provider_dashboard"))
 
 
-
-
-@app.route("/api/provider/requests", methods=["GET"])
-@login_required(role="provider")
-def provider_requests():
-    user = current_user()
-    p_lat, p_lng = user.get("lat"), user.get("lng")
-    radius = user.get("service_radius_km")
-
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT r.*, u.name AS receiver_name
-        FROM requests r
-        JOIN users u ON u.id = r.receiver_user_id
-        ORDER BY r.id DESC
-    """)
-    rows = cur.fetchall()
-    conn.close()
-
-    out = []
-    for r in rows:
-        item = dict(r)
-
-        # default statuses
-        item["distance_km"] = None
-        item["can_serve"] = None
-        item["serve_reason"] = ""
-
-        r_lat, r_lng = item.get("lat"), item.get("lng")
-
-        if r_lat is None or r_lng is None:
-            item["can_serve"] = False
-            item["serve_reason"] = "No pin for request"
-        elif p_lat is None or p_lng is None or radius is None:
-            item["can_serve"] = False
-            item["serve_reason"] = "Set your service pin + radius"
-        else:
-            d = haversine_km(float(p_lat), float(p_lng), float(r_lat), float(r_lng))
-            item["distance_km"] = round(d, 2)
-            if d <= float(radius):
-                item["can_serve"] = True
-                item["serve_reason"] = f"Within {radius} km"
-            else:
-                item["can_serve"] = False
-                item["serve_reason"] = f"Out of range ({radius} km)"
-
-        out.append(item)
-
-    return jsonify(out)
+# =========================
+# API: receiver location save + availability check
+# =========================
 @app.route("/api/receiver/location", methods=["POST"])
 @login_required(role="receiver")
 def api_receiver_location_save_and_check():
@@ -398,28 +360,17 @@ def api_receiver_location_save_and_check():
     data = request.get_json(silent=True) or {}
 
     location_text = (data.get("location_text") or "").strip()
-    lat = data.get("lat")
-    lng = data.get("lng")
+    lat_f = to_float(data.get("lat"))
+    lng_f = to_float(data.get("lng"))
 
-    def to_float(x):
-        try:
-            return float(x)
-        except (TypeError, ValueError):
-            return None
-
-    lat_f = to_float(lat)
-    lng_f = to_float(lng)
-
-    # 1) Save receiver location
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
         "UPDATE users SET location_text=?, lat=?, lng=? WHERE id=?",
-        (location_text if location_text else None, lat_f, lng_f, user["id"])
+        (location_text if location_text else None, lat_f, lng_f, user["id"]),
     )
     conn.commit()
 
-    # If receiver has no pin, return immediately
     if lat_f is None or lng_f is None:
         conn.close()
         return jsonify({
@@ -432,11 +383,9 @@ def api_receiver_location_save_and_check():
             "reason": "No pin set. Click the map or use current location."
         })
 
-    # 2) Count total provider accounts (info only)
     cur.execute("SELECT COUNT(*) AS c FROM users WHERE role='provider'")
     providers_total = cur.fetchone()["c"]
 
-    # 3) Fetch only CONFIGURED providers (pin + radius)
     cur.execute("""
         SELECT id, name, lat, lng, service_radius_km
         FROM users
@@ -449,7 +398,6 @@ def api_receiver_location_save_and_check():
 
     providers_configured = len(providers)
 
-    # Clear reasons for special cases
     if providers_total == 0:
         return jsonify({
             "ok": True,
@@ -472,26 +420,17 @@ def api_receiver_location_save_and_check():
             "reason": "Providers exist, but none have set service pin + radius yet."
         })
 
-    # 4) Compute in-range providers + debug list
     in_range = []
     nearest_any_km = None
 
     for p in providers:
         p_lat = float(p["lat"])
         p_lng = float(p["lng"])
-
-        try:
-            p_rad = float(p["service_radius_km"])
-        except (TypeError, ValueError):
-            continue
-
-        # ✅ radius validation (avoid wrong counts)
-        # Change cap if you want bigger service areas
-        if p_rad <= 0 or p_rad > 200:
+        p_rad = to_float(p["service_radius_km"])
+        if p_rad is None or p_rad <= 0 or p_rad > 200:
             continue
 
         d = haversine_km(lat_f, lng_f, p_lat, p_lng)
-
         if nearest_any_km is None or d < nearest_any_km:
             nearest_any_km = d
 
@@ -514,7 +453,7 @@ def api_receiver_location_save_and_check():
             "providers_configured": providers_configured,
             "providers_total": providers_total,
             "nearest_provider_km": in_range[0]["distance_km"],
-            "providers_list": in_range[:5],  # ✅ top 5 for debugging/UI
+            "providers_list": in_range[:5],
             "reason": "Service is available for your location."
         })
 
@@ -529,6 +468,194 @@ def api_receiver_location_save_and_check():
         "reason": "No providers are in range for this location."
     })
 
+
+# =========================
+# API: requests list (receiver sees own)
+# =========================
+@app.route("/api/requests", methods=["GET"])
+@login_required()
+def list_requests():
+    user = current_user()
+    conn = get_db()
+    cur = conn.cursor()
+
+    if user["role"] == "receiver":
+        cur.execute("""
+            SELECT r.*, u.name AS receiver_name
+            FROM requests r
+            JOIN users u ON u.id = r.receiver_user_id
+            WHERE r.receiver_user_id = ?
+            ORDER BY r.id DESC
+        """, (user["id"],))
+    else:
+        cur.execute("""
+            SELECT r.*, u.name AS receiver_name
+            FROM requests r
+            JOIN users u ON u.id = r.receiver_user_id
+            ORDER BY r.id DESC
+        """)
+
+    rows = cur.fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+
+# =========================
+# API: receiver creates request
+# =========================
+@app.route("/api/requests", methods=["POST"])
+@login_required(role="receiver")
+def create_request():
+    user = current_user()
+    data = request.get_json(silent=True) or {}
+
+    title = (data.get("title") or "").strip()
+    category = (data.get("category") or "").strip()
+    details = (data.get("details") or "").strip()
+
+    scheduled_date = (data.get("scheduled_date") or "").strip() or None
+    scheduled_time = (data.get("scheduled_time") or "").strip() or None
+    duration_min = to_int(data.get("duration_min"))
+    hourly_wage = to_float(data.get("hourly_wage"))
+
+    if not title or not category:
+        return jsonify({"error": "title and category are required"}), 400
+
+    if user.get("lat") is None or user.get("lng") is None:
+        return jsonify({"error": "Please save your location pin before creating a request."}), 400
+
+    if not scheduled_date or not scheduled_time or not duration_min or hourly_wage is None:
+        return jsonify({"error": "Please select date, time, duration, and hourly wage."}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO requests
+          (receiver_user_id, title, category, details, status, created_at,
+           location_text, lat, lng, scheduled_date, scheduled_time, duration_min, hourly_wage)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        user["id"], title, category, details, "Open", datetime.utcnow().isoformat(),
+        user.get("location_text"), user.get("lat"), user.get("lng"),
+        scheduled_date, scheduled_time, duration_min, hourly_wage
+    ))
+    conn.commit()
+    new_id = cur.lastrowid
+    conn.close()
+
+    return jsonify({"ok": True, "id": new_id}), 201
+
+
+# =========================
+# API: mark serviced (ONLY receiver)
+# =========================
+@app.route("/api/requests/<int:req_id>/resolve", methods=["POST"])
+@login_required(role="receiver")
+def mark_serviced(req_id):
+    user = current_user()
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM requests WHERE id=?", (req_id,))
+    r = cur.fetchone()
+    if not r:
+        conn.close()
+        return jsonify({"error": "Request not found"}), 404
+
+    r = dict(r)
+
+    # must be their own request
+    if r["receiver_user_id"] != user["id"]:
+        conn.close()
+        return jsonify({"error": "You can only mark your own request as serviced."}), 403
+
+    # already serviced?
+    if (r.get("status") or "").lower() == "serviced":
+        conn.close()
+        return jsonify({"ok": True, "already": True, "status": "Serviced"}), 200
+
+    now = datetime.utcnow().isoformat()
+    cur.execute("""
+        UPDATE requests
+        SET status='Serviced', serviced_at=?, serviced_by_user_id=?
+        WHERE id=?
+    """, (now, user["id"], req_id))
+    conn.commit()
+    conn.close()
+
+    return jsonify({"ok": True, "already": False, "status": "Serviced"}), 200
+
+
+# =========================
+# API: provider requests (ONLY in service area)
+# - Default: show ONLY Open requests (current)
+# - If you want history too: ?history=1
+# =========================
+@app.route("/api/provider/requests", methods=["GET"])
+@login_required(role="provider")
+def provider_requests():
+    user = current_user()
+    p_lat, p_lng = user.get("lat"), user.get("lng")
+    radius = user.get("service_radius_km")
+
+    if p_lat is None or p_lng is None or radius is None:
+        return jsonify({"error": "Set your service pin + radius"}), 400
+
+    include_history = (request.args.get("history") == "1")
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    if include_history:
+        cur.execute("""
+            SELECT r.*, u.name AS receiver_name
+            FROM requests r
+            JOIN users u ON u.id = r.receiver_user_id
+            ORDER BY r.id DESC
+        """)
+    else:
+        # ✅ current requests ONLY
+        cur.execute("""
+            SELECT r.*, u.name AS receiver_name
+            FROM requests r
+            JOIN users u ON u.id = r.receiver_user_id
+            WHERE r.status='Open'
+            ORDER BY r.id DESC
+        """)
+
+    rows = cur.fetchall()
+    conn.close()
+
+    out = []
+    for row in rows:
+        item = dict(row)
+
+        item["distance_km"] = None
+        item["can_serve"] = False
+        item["serve_reason"] = ""
+
+        r_lat, r_lng = item.get("lat"), item.get("lng")
+        if r_lat is None or r_lng is None:
+            item["serve_reason"] = "Request has no pin"
+            continue
+
+        d = haversine_km(float(p_lat), float(p_lng), float(r_lat), float(r_lng))
+        item["distance_km"] = round(d, 2)
+
+        if d <= float(radius):
+            item["can_serve"] = True
+            item["serve_reason"] = f"Within {radius} km"
+            out.append(item)
+        else:
+            # out-of-range requests are hidden by default
+            continue
+
+    return jsonify(out)
+
+
+# =========================
+# Run
+# =========================
 if __name__ == "__main__":
     init_db()
     app.run(debug=True)
