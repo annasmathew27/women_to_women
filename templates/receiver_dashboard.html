@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Receiver Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css" />
+
+  <!-- Leaflet (map) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <style>
+    #map { height: 320px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.12); }
+    .muted { opacity: 0.75; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="row">
+      <h1>Receiver Dashboard</h1>
+      <a class="btn secondary" href="/logout">Logout</a>
+    </div>
+
+    <p>Welcome, <b>{{ user.name }}</b> ({{ user.email }})</p>
+
+    <!-- ✅ Location Setup -->
+    <div class="card">
+      <h2>Your Location</h2>
+      <p class="muted">
+        Add a safe location description + optionally pin on the map.
+        “Use current location” will ask permission.
+      </p>
+
+      <form method="POST" action="/receiver/location" id="locForm">
+        <label>
+          Location details (text)
+          <input name="location_text" id="location_text"
+                 placeholder="Example: Near Curtin Uni library entrance"
+                 value="{{ user.location_text or '' }}">
+        </label>
+
+        <!-- Hidden fields stored from map -->
+        <input type="hidden" name="lat" id="lat" value="{{ user.lat or '' }}">
+        <input type="hidden" name="lng" id="lng" value="{{ user.lng or '' }}">
+
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+          <button type="button" class="btn" id="useCurrentBtn">Use current location</button>
+          <button type="button" class="btn" id="clearPinBtn">Clear pin</button>
+          <button type="button" class="btn primary" id="saveBtn">Save location</button>
+
+        </div>
+
+        <div class="muted" id="locStatus" style="margin-top:8px;"></div>
+      </form>
+
+      <div style="margin-top:12px;">
+        <div id="map"></div>
+        <div class="muted" style="margin-top:8px;">
+          Tip: Click the map to drop a pin. Drag the pin to adjust.
+        </div>
+      </div>
+    </div>
+
+    <!-- Next step area -->
+    <div class="card">
+      <h2>Create Request (next)</h2>
+      <p class="muted">
+        Next we’ll use your saved location automatically when you create a help request.
+      </p>
+    </div>
+
+    <p><a href="/">Home</a></p>
+  </div>
+  <div id="resultModal" class="modal hidden">
+  <div class="modalBox">
+    <h3 id="modalTitle">Result</h3>
+    <p id="modalText" class="muted"></p>
+    <div id="modalExtra" class="muted" style="margin-top:8px;"></div>
+    <div style="margin-top:14px; display:flex; gap:10px; justify-content:flex-end;">
+      <button class="btn" id="closeModalBtn" type="button">Close</button>
+    </div>
+  </div>
+</div>
+
+
+<script>
+  // Default center (Perth-ish). If you want India default, change these.
+  const defaultLat = -31.9523;
+  const defaultLng = 115.8613;
+
+  const latInput = document.getElementById("lat");
+  const lngInput = document.getElementById("lng");
+  const locStatus = document.getElementById("locStatus");
+
+  const savedLat = parseFloat(latInput.value);
+  const savedLng = parseFloat(lngInput.value);
+
+  const startLat = Number.isFinite(savedLat) ? savedLat : defaultLat;
+  const startLng = Number.isFinite(savedLng) ? savedLng : defaultLng;
+
+  const map = L.map('map').setView([startLat, startLng], 13);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap'
+  }).addTo(map);
+
+  let marker = null;
+
+  function setMarker(lat, lng, zoomTo=true) {
+    latInput.value = lat;
+    lngInput.value = lng;
+
+    if (!marker) {
+      marker = L.marker([lat, lng], { draggable: true }).addTo(map);
+      marker.on('dragend', () => {
+        const pos = marker.getLatLng();
+        latInput.value = pos.lat.toFixed(6);
+        lngInput.value = pos.lng.toFixed(6);
+        locStatus.textContent = `Pin updated: ${latInput.value}, ${lngInput.value}`;
+      });
+    } else {
+      marker.setLatLng([lat, lng]);
+    }
+
+    if (zoomTo) map.setView([lat, lng], 16);
+    locStatus.textContent = `Pin set: ${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+  }
+
+  // If already saved, show marker
+  if (Number.isFinite(savedLat) && Number.isFinite(savedLng)) {
+    setMarker(savedLat, savedLng, false);
+  }
+
+  // Click map to place marker
+  map.on('click', (e) => {
+    setMarker(e.latlng.lat, e.latlng.lng, false);
+  });
+
+  // Use current location (browser GPS)
+  document.getElementById("useCurrentBtn").addEventListener("click", () => {
+    locStatus.textContent = "Requesting location permission…";
+    if (!navigator.geolocation) {
+      locStatus.textContent = "Geolocation not supported by your browser.";
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        setMarker(lat, lng, true);
+        locStatus.textContent = "Current location captured. Save to store it.";
+      },
+      (err) => {
+        locStatus.textContent = "Could not get location (permission denied or unavailable).";
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  });
+
+  // Clear pin
+  document.getElementById("clearPinBtn").addEventListener("click", () => {
+    latInput.value = "";
+    lngInput.value = "";
+    locStatus.textContent = "Pin cleared. Save to remove stored pin.";
+    if (marker) {
+      map.removeLayer(marker);
+      marker = null;
+    }
+  });
+</script>
+
+</body>
+</html>

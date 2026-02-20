@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Provider Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css" />
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <style>
+    #map { height: 280px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.12); }
+    .muted { opacity: 0.75; font-size: 14px; }
+    .badge { padding: 6px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.2); font-size: 12px; }
+    .ok { border-color: rgba(80,255,160,0.45); }
+    .no { border-color: rgba(255,77,77,0.45); }
+    .warn { border-color: rgba(255,200,80,0.45); }
+    .item { margin-top: 12px; padding: 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.04); }
+    .top { display:flex; justify-content: space-between; gap:10px; align-items:flex-start; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="row">
+      <h1>Provider Dashboard</h1>
+      <a class="btn secondary" href="/logout">Logout</a>
+    </div>
+
+    <p>Welcome, <b>{{ user.name }}</b> ({{ user.email }})</p>
+
+    <!-- Service Area Setup -->
+    <div class="card">
+      <h2>Your Service Area</h2>
+      <p class="muted">Click map to set your base pin. Choose radius (km). Then Save.</p>
+
+      <form method="POST" action="/provider/service" id="serviceForm">
+        <input type="hidden" name="lat" id="lat" value="{{ user.lat or '' }}">
+        <input type="hidden" name="lng" id="lng" value="{{ user.lng or '' }}">
+
+        <label>
+          Radius (km)
+          <input name="service_radius_km" id="radius" type="number" step="0.5" min="0"
+                 value="{{ user.service_radius_km or 5 }}" />
+        </label>
+
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+          <button type="button" class="btn" id="useCurrentBtn">Use current location</button>
+          <button class="btn primary" type="submit">Save service area</button>
+        </div>
+
+        <div class="muted" id="status" style="margin-top:8px;"></div>
+      </form>
+
+      <div style="margin-top:12px;">
+        <div id="map"></div>
+      </div>
+    </div>
+
+    <!-- Requests Feed -->
+    <div class="card">
+      <div class="row">
+        <h2>Requests</h2>
+        <button class="btn" id="refreshBtn" type="button">Refresh</button>
+      </div>
+      <div id="list" class="muted">Loading…</div>
+    </div>
+  </div>
+
+<script>
+  // Map defaults
+  const defaultLat = -31.9523, defaultLng = 115.8613;
+
+  const latInput = document.getElementById("lat");
+  const lngInput = document.getElementById("lng");
+  const statusEl = document.getElementById("status");
+
+  const savedLat = parseFloat(latInput.value);
+  const savedLng = parseFloat(lngInput.value);
+
+  const startLat = Number.isFinite(savedLat) ? savedLat : defaultLat;
+  const startLng = Number.isFinite(savedLng) ? savedLng : defaultLng;
+
+  const map = L.map("map").setView([startLat, startLng], 12);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
+
+  let marker = null;
+
+  function setMarker(lat, lng, zoomTo=false) {
+    latInput.value = lat;
+    lngInput.value = lng;
+
+    if (!marker) {
+      marker = L.marker([lat, lng], { draggable: true }).addTo(map);
+      marker.on("dragend", () => {
+        const p = marker.getLatLng();
+        latInput.value = p.lat.toFixed(6);
+        lngInput.value = p.lng.toFixed(6);
+        statusEl.textContent = "Pin updated. Save to apply.";
+      });
+    } else {
+      marker.setLatLng([lat, lng]);
+    }
+    if (zoomTo) map.setView([lat, lng], 15);
+    statusEl.textContent = "Pin set. Save to apply.";
+  }
+
+  if (Number.isFinite(savedLat) && Number.isFinite(savedLng)) {
+    setMarker(savedLat, savedLng, false);
+  }
+
+  map.on("click", (e) => setMarker(e.latlng.lat, e.latlng.lng, false));
+
+  document.getElementById("useCurrentBtn").addEventListener("click", () => {
+    statusEl.textContent = "Requesting location permission…";
+    if (!navigator.geolocation) return statusEl.textContent = "Geolocation not supported.";
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setMarker(pos.coords.latitude, pos.coords.longitude, true);
+        statusEl.textContent = "Current location captured. Save to apply.";
+      },
+      () => statusEl.textContent = "Could not get location (permission denied/unavailable).",
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  });
+
+  // ---- Requests feed with "can serve" ----
+  const list = document.getElementById("list");
+  const refreshBtn = document.getElementById("refreshBtn");
+
+  function esc(s){ return String(s ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;"); }
+
+  function badge(item){
+    if (item.can_serve === true) return `<span class="badge ok">✅ Can serve • ${item.distance_km} km</span>`;
+    if (item.serve_reason && item.serve_reason.includes("Set your")) return `<span class="badge warn">⚠️ ${esc(item.serve_reason)}</span>`;
+    if (item.serve_reason && item.serve_reason.includes("No pin")) return `<span class="badge warn">⚠️ ${esc(item.serve_reason)}</span>`;
+    return `<span class="badge no">❌ ${esc(item.serve_reason || "Cannot serve")}</span>`;
+  }
+
+  async function load() {
+    list.textContent = "Loading…";
+    const res = await fetch("/api/provider/requests");
+    const data = await res.json();
+
+    if (!Array.isArray(data) || data.length === 0) {
+      list.innerHTML = `<div class="muted">No requests yet.</div>`;
+      return;
+    }
+
+    list.innerHTML = data.map(r => `
+      <div class="item">
+        <div class="top">
+          <div>
+            <div style="font-weight:700;">${esc(r.title)} <span class="muted">(${esc(r.category)})</span></div>
+            <div class="muted">From: ${esc(r.receiver_name)} • ${new Date(r.created_at).toLocaleString()}</div>
+            <div class="muted">Location: ${esc(r.location_text || "—")}</div>
+          </div>
+          ${badge(r)}
+        </div>
+        ${r.details ? `<div class="muted" style="margin-top:8px;">${esc(r.details)}</div>` : ""}
+      </div>
+    `).join("");
+  }
+
+  refreshBtn.addEventListener("click", load);
+  load();
+</script>
+</body>
+</html>

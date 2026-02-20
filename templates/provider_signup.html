@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html><head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Provider Signup</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>Provider Signup</h1>
+
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+    <form method="POST" class="card">
+      <label>Name<input name="name" required /></label>
+      <label>Email<input name="email" type="email" required /></label>
+      <label>Password<input name="password" type="password" required /></label>
+      <button class="btn" type="submit">Create account</button>
+    </form>
+
+    <p>Already have an account? <a href="/provider/login">Login</a></p>
+    <p><a href="/">Back</a></p>
+  </div>
+</body></html>
