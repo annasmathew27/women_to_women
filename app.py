@@ -3,6 +3,8 @@ import sqlite3
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 import math
+from functools import wraps
+
 app = Flask(__name__)
 app.secret_key = "change-this-to-a-random-secret"  # IMPORTANT: change later
 
@@ -84,17 +86,27 @@ def current_user():
     return dict(row) if row else None
 
 
+
 def login_required(role=None):
     def decorator(fn):
+        @wraps(fn)
         def wrapper(*args, **kwargs):
             user = current_user()
+
+            # If not logged in:
             if not user:
+                # ✅ If API call, return JSON, not redirect HTML
+                if request.path.startswith("/api/"):
+                    return jsonify({"error": "Login required"}), 401
                 return redirect(url_for("home"))
+
+            # If wrong role:
             if role and user["role"] != role:
-                # wrong role trying to access page
+                if request.path.startswith("/api/"):
+                    return jsonify({"error": "Forbidden for this role"}), 403
                 return redirect(url_for(f"{user['role']}_dashboard"))
+
             return fn(*args, **kwargs)
-        wrapper.__name__ = fn.__name__
         return wrapper
     return decorator
 
@@ -269,35 +281,36 @@ def provider_dashboard():
     return render_template("provider_dashboard.html", user=user)
 
 # ---- (Optional) API for receiver to create request ----
-@app.route("/api/requests", methods=["POST"])
-def create_request():
+@app.route("/api/requests", methods=["GET"])
+def list_requests():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT r.*, u.name AS receiver_name
+        FROM requests r
+        JOIN users u ON u.id = r.receiver_user_id
+        ORDER BY r.id DESC
+    """)
+    rows = cur.fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+@app.route("/api/requests/<int:req_id>/resolve", methods=["POST"])
+def resolve_request(req_id):
+    # optionally enforce provider only:
     user = current_user()
-    if not user or user["role"] != "receiver":
-        return jsonify({"error": "Receiver login required"}), 401
-
-    data = request.get_json(silent=True) or {}
-    title = (data.get("title") or "").strip()
-    category = (data.get("category") or "").strip()
-    details = (data.get("details") or "").strip()
-
-    if not title or not category:
-        return jsonify({"error": "title and category are required"}), 400
+    if not user or user["role"] != "provider":
+        return jsonify({"error": "Provider login required"}), 401
 
     conn = get_db()
     cur = conn.cursor()
-    cur.execute(
-    """INSERT INTO requests
-       (receiver_user_id, title, category, details, status, created_at, location_text, lat, lng)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-    (user["id"], title, category, details, "Open", datetime.utcnow().isoformat(),
-     user.get("location_text"), user.get("lat"), user.get("lng")))
-   
-
+    cur.execute("UPDATE requests SET status='Resolved' WHERE id=?", (req_id,))
     conn.commit()
-    new_id = cur.lastrowid
+    updated = cur.rowcount
     conn.close()
 
-    return jsonify({"ok": True, "id": new_id}), 201
+    if updated == 0:
+        return jsonify({"error": "Request not found"}), 404
+    return jsonify({"ok": True})
 @app.route("/provider/service", methods=["POST"])
 @login_required(role="provider")
 def provider_service_save():
@@ -397,7 +410,7 @@ def api_receiver_location_save_and_check():
     lat_f = to_float(lat)
     lng_f = to_float(lng)
 
-    # Save to receiver profile
+    # 1) Save receiver location
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
@@ -406,17 +419,24 @@ def api_receiver_location_save_and_check():
     )
     conn.commit()
 
-    # If no pin, return warning
+    # If receiver has no pin, return immediately
     if lat_f is None or lng_f is None:
         conn.close()
         return jsonify({
             "ok": True,
             "can_serve": False,
             "providers_in_range": 0,
-            "reason": "No pin set. Please select on map or use current location."
+            "providers_configured": 0,
+            "providers_total": 0,
+            "providers_list": [],
+            "reason": "No pin set. Click the map or use current location."
         })
 
-    # Find providers with pin + radius set
+    # 2) Count total provider accounts (info only)
+    cur.execute("SELECT COUNT(*) AS c FROM users WHERE role='provider'")
+    providers_total = cur.fetchone()["c"]
+
+    # 3) Fetch only CONFIGURED providers (pin + radius)
     cur.execute("""
         SELECT id, name, lat, lng, service_radius_km
         FROM users
@@ -427,35 +447,87 @@ def api_receiver_location_save_and_check():
     providers = cur.fetchall()
     conn.close()
 
-    count = 0
-    nearest_km = None
+    providers_configured = len(providers)
 
-    for p in providers:
-        d = haversine_km(lat_f, lng_f, float(p["lat"]), float(p["lng"]))
-        if nearest_km is None or d < nearest_km:
-            nearest_km = d
-
-        if d <= float(p["service_radius_km"]):
-            count += 1
-
-    if count > 0:
-        return jsonify({
-            "ok": True,
-            "can_serve": True,
-            "providers_in_range": count,
-            "nearest_provider_km": round(nearest_km, 2) if nearest_km is not None else None,
-            "reason": "Service is available for your location."
-        })
-    else:
+    # Clear reasons for special cases
+    if providers_total == 0:
         return jsonify({
             "ok": True,
             "can_serve": False,
             "providers_in_range": 0,
-            "nearest_provider_km": round(nearest_km, 2) if nearest_km is not None else None,
-            "reason": "No providers are currently in range for this location."
+            "providers_configured": 0,
+            "providers_total": 0,
+            "providers_list": [],
+            "reason": "No providers exist yet. Create a Provider account and set service area."
         })
 
+    if providers_configured == 0:
+        return jsonify({
+            "ok": True,
+            "can_serve": False,
+            "providers_in_range": 0,
+            "providers_configured": 0,
+            "providers_total": providers_total,
+            "providers_list": [],
+            "reason": "Providers exist, but none have set service pin + radius yet."
+        })
 
+    # 4) Compute in-range providers + debug list
+    in_range = []
+    nearest_any_km = None
+
+    for p in providers:
+        p_lat = float(p["lat"])
+        p_lng = float(p["lng"])
+
+        try:
+            p_rad = float(p["service_radius_km"])
+        except (TypeError, ValueError):
+            continue
+
+        # ✅ radius validation (avoid wrong counts)
+        # Change cap if you want bigger service areas
+        if p_rad <= 0 or p_rad > 200:
+            continue
+
+        d = haversine_km(lat_f, lng_f, p_lat, p_lng)
+
+        if nearest_any_km is None or d < nearest_any_km:
+            nearest_any_km = d
+
+        if d <= p_rad:
+            in_range.append({
+                "id": p["id"],
+                "name": p["name"],
+                "distance_km": round(d, 2),
+                "radius_km": p_rad
+            })
+
+    in_range.sort(key=lambda x: x["distance_km"])
+    providers_in_range = len(in_range)
+
+    if providers_in_range > 0:
+        return jsonify({
+            "ok": True,
+            "can_serve": True,
+            "providers_in_range": providers_in_range,
+            "providers_configured": providers_configured,
+            "providers_total": providers_total,
+            "nearest_provider_km": in_range[0]["distance_km"],
+            "providers_list": in_range[:5],  # ✅ top 5 for debugging/UI
+            "reason": "Service is available for your location."
+        })
+
+    return jsonify({
+        "ok": True,
+        "can_serve": False,
+        "providers_in_range": 0,
+        "providers_configured": providers_configured,
+        "providers_total": providers_total,
+        "nearest_provider_km": round(nearest_any_km, 2) if nearest_any_km is not None else None,
+        "providers_list": [],
+        "reason": "No providers are in range for this location."
+    })
 
 if __name__ == "__main__":
     init_db()

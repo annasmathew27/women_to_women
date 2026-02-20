@@ -4,29 +4,31 @@ const feedList = document.getElementById("feedList");
 const refreshBtn = document.getElementById("refreshBtn");
 const sosBtn = document.getElementById("sosBtn");
 
-async function fetchFeed() {
-  feedList.innerHTML = `<div class="meta">Loading…</div>`;
-  try {
-    const res = await fetch("/api/requests");
-    const data = await res.json();
+// NEW: lock requests until receiver clicks "Continue"
+let requestsUnlocked = false;
 
-    if (!Array.isArray(data) || data.length === 0) {
-      feedList.innerHTML = `<div class="meta">No requests yet.</div>`;
-      return;
-    }
+// Expose a function receiver_dashboard.html can call
+window.unlockRequests = function () {
+  requestsUnlocked = true;
+};
 
-    feedList.innerHTML = data.map(renderItem).join("");
-    wireResolveButtons();
-  } catch (e) {
-    feedList.innerHTML = `<div class="meta">Failed to load feed.</div>`;
-  }
+function escapeHtml(text) {
+  return String(text ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 function renderItem(r) {
   const created = r.created_at ? new Date(r.created_at).toLocaleString() : "";
   const statusClass = (r.status || "").toLowerCase() === "resolved" ? "resolved" : "open";
 
-  const detailsHtml = r.details ? `<div class="meta" style="margin-top:8px;">${escapeHtml(r.details)}</div>` : "";
+  const detailsHtml = r.details
+    ? `<div class="meta" style="margin-top:8px;">${escapeHtml(r.details)}</div>`
+    : "";
+
   const btnHtml = statusClass === "open"
     ? `<button class="btn" data-resolve="${r.id}">Mark Resolved</button>`
     : "";
@@ -48,7 +50,7 @@ function renderItem(r) {
   `;
 }
 
-function wireResolveButtons() {
+function wireResolveButtons(fetchFeed) {
   document.querySelectorAll("[data-resolve]").forEach(btn => {
     btn.addEventListener("click", async () => {
       const id = btn.getAttribute("data-resolve");
@@ -65,116 +67,75 @@ function wireResolveButtons() {
   });
 }
 
-form.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  msg.textContent = "Submitting…";
+async function fetchFeed() {
+  if (!feedList) return;
 
-  const payload = {
-    title: document.getElementById("title").value.trim(),
-    category: document.getElementById("category").value.trim(),
-    details: document.getElementById("details").value.trim()
-  };
-
+  feedList.innerHTML = `<div class="meta">Loading…</div>`;
   try {
-    const res = await fetch("/api/requests", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
+    const res = await fetch("/api/requests");
+    const data = await res.json();
 
-    const out = await res.json().catch(() => ({}));
-
-    if (!res.ok) {
-      msg.textContent = out.error || "Error submitting request.";
+    if (!Array.isArray(data) || data.length === 0) {
+      feedList.innerHTML = `<div class="meta">No requests yet.</div>`;
       return;
     }
 
-    msg.textContent = "Saved ✅";
-    form.reset();
-    await fetchFeed();
+    feedList.innerHTML = data.map(renderItem).join("");
+    wireResolveButtons(fetchFeed);
   } catch (e) {
-    msg.textContent = "Network error.";
+    feedList.innerHTML = `<div class="meta">Failed to load feed.</div>`;
   }
-});
-
-refreshBtn.addEventListener("click", fetchFeed);
-
-sosBtn.addEventListener("click", () => {
-  alert("SOS demo: later this can send location + notify contacts.");
-});
-
-function escapeHtml(text) {
-  return String(text)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
 }
 
-fetchFeed();
-<script>
-  const saveBtn = document.getElementById("saveBtn");
-  const modal = document.getElementById("resultModal");
-  const modalTitle = document.getElementById("modalTitle");
-  const modalText = document.getElementById("modalText");
-  const modalExtra = document.getElementById("modalExtra");
-  const closeModalBtn = document.getElementById("closeModalBtn");
+// ✅ Only attach handlers if elements exist on this page
+if (form && msg) {
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
 
-  function openModal(title, text, extra="") {
-    modalTitle.textContent = title;
-    modalText.textContent = text;
-    modalExtra.textContent = extra;
-    modal.classList.remove("hidden");
-  }
-  function closeModal() {
-    modal.classList.add("hidden");
-  }
+    // NEW: block submission unless unlocked
+    if (!requestsUnlocked) {
+      msg.textContent = "Please confirm your location & availability first.";
+      return;
+    }
 
-  closeModalBtn.addEventListener("click", closeModal);
-  modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
-
-  saveBtn.addEventListener("click", async () => {
-    locStatus.textContent = "Saving…";
+    msg.textContent = "Submitting…";
 
     const payload = {
-      location_text: document.getElementById("location_text").value.trim(),
-      lat: latInput.value ? parseFloat(latInput.value) : null,
-      lng: lngInput.value ? parseFloat(lngInput.value) : null
+      title: document.getElementById("title")?.value.trim() || "",
+      category: document.getElementById("category")?.value.trim() || "",
+      details: document.getElementById("details")?.value.trim() || ""
     };
 
     try {
-      const res = await fetch("/api/receiver/location", {
+      const res = await fetch("/api/requests", {
         method: "POST",
-        headers: {"Content-Type": "application/json"},
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
 
-      const out = await res.json();
+      const out = await res.json().catch(() => ({}));
 
-      if (!res.ok || !out.ok) {
-        locStatus.textContent = "Save failed.";
-        openModal("Error", out.error || "Could not save location.");
+      if (!res.ok) {
+        msg.textContent = out.error || "Error submitting request.";
         return;
       }
 
-      locStatus.textContent = "Saved ✅";
-
-      if (out.can_serve) {
-        const extra = `Providers in range: ${out.providers_in_range}`
-          + (out.nearest_provider_km != null ? ` • Nearest provider: ${out.nearest_provider_km} km` : "");
-        openModal("✅ Service Available", out.reason, extra);
-      } else {
-        const extra = (out.nearest_provider_km != null)
-          ? `Nearest provider: ${out.nearest_provider_km} km`
-          : "";
-        openModal("❌ Not Available", out.reason, extra);
-      }
-
+      msg.textContent = "Saved ✅";
+      form.reset();
+      await fetchFeed();
     } catch (e) {
-      locStatus.textContent = "Network error.";
-      openModal("Error", "Network error while saving location.");
+      msg.textContent = "Network error.";
     }
   });
-</script>
+}
 
+if (refreshBtn) refreshBtn.addEventListener("click", fetchFeed);
+
+if (sosBtn) {
+  sosBtn.addEventListener("click", () => {
+    alert("SOS demo: later this can send location + notify contacts.");
+  });
+}
+
+// Auto-load feed if feedList exists
+if (feedList) fetchFeed();
